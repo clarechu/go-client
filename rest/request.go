@@ -585,7 +585,7 @@ func (r *Request) request(writer io.Writer, fn func(*http.Request, *http.Respons
 }
 
 func getTransferEncoding(resp *http.Response) string {
-	for _, transferEncoding := range resp.TransferEncoding {
+	for _, transferEncoding := range resp.Header.Values("Transfer-Encoding") {
 		if transferEncoding == "chunked" {
 			return transferEncoding
 		}
