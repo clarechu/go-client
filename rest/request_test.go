@@ -16,6 +16,7 @@ See the License for the specific language governing permissions and
 package rest
 
 import (
+	"context"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -72,7 +73,7 @@ func TestRequestOrdersNamespaceInPath(t *testing.T) {
 	r := (&Request{
 		baseURL:    &url.URL{},
 		pathPrefix: "/test/",
-	}).Name("bar").Resource("baz").Project("foo")
+	}).Name("bar").Resource(context.Background(), "baz").Project("foo")
 	if s := r.URL().String(); s != "/test/projects/foo/baz/bar" {
 		t.Errorf("namespace should be in order in path: %s", s)
 	}
@@ -82,7 +83,7 @@ func TestRequestOrdersNamespaceInPath1(t *testing.T) {
 	r := (&Request{
 		baseURL:    &url.URL{},
 		pathPrefix: "/test/",
-	}).Name("bar").Resource("baz").Project("foo").Suffix("/a")
+	}).Name("bar").Resource(context.Background(), "baz").Project("foo").Suffix("/a")
 	if s := r.URL().String(); s != "/test/projects/foo/baz/bar/a" {
 		t.Errorf("namespace should be in order in path: %s", s)
 	}

@@ -16,6 +16,7 @@ See the License for the specific language governing permissions and
 package rest
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
@@ -251,6 +252,23 @@ func (r *Request) Body(obj interface{}) *Request {
 	return r
 }
 
+func readChunkedResponseLine(r *bufio.Reader) ([]byte, error) {
+	line, isPrefix, err := r.ReadLine()
+	if err != nil {
+		return nil, err
+	}
+
+	if isPrefix {
+		rest, err := readChunkedResponseLine(r)
+		if err != nil {
+			return nil, err
+		}
+		line = append(line, rest...)
+	}
+
+	return line, nil
+}
+
 // Param creates a query parameter with the given string value.
 func (r *Request) Param(paramName, s string) *Request {
 	if r.err != nil {
@@ -347,7 +365,8 @@ func (r *Request) URL() *url.URL {
 }
 
 // Project applies the namespace scope to a request (<resource>/[ns/<namespace>/]<name>)
-func (r *Request) Project(project string) *Request {
+func (r *Request) Project(ctx context.Context, project string) *Request {
+	r.ctx = ctx
 	if r.err != nil {
 		return r
 	}
@@ -361,7 +380,8 @@ func (r *Request) Project(project string) *Request {
 }
 
 // Resource sets the resource to access (<resource>/[ns/<namespace>/]<name>)
-func (r *Request) Resource(resource string) *Request {
+func (r *Request) Resource(ctx context.Context, resource string) *Request {
+	r.ctx = ctx
 	if r.err != nil {
 		return r
 	}
@@ -419,7 +439,7 @@ func (r *Request) Do() Result {
 	}
 
 	var result Result
-	err := r.request(func(req *http.Request, resp *http.Response) {
+	err := r.request(nil, func(req *http.Request, resp *http.Response) {
 		result = r.transformResponse(resp, req)
 	})
 	if err != nil {
@@ -428,11 +448,21 @@ func (r *Request) Do() Result {
 	return result
 }
 
+func (r *Request) Stream(writer io.Writer) error {
+	if err := r.tryThrottle(); err != nil {
+		return err
+	}
+	err := r.request(writer, func(req *http.Request, resp *http.Response) {
+		r.transformResponse(resp, req)
+	})
+	return err
+}
+
 // request connects to the server and invokes the provided function when a server response is
 // received. It handles retry behavior and up front validation of requests. It will invoke
 // fn at most once. It will return an error if a problem occurred prior to connecting to the
 // server - the provided function is responsible for handling server errors.
-func (r *Request) request(fn func(*http.Request, *http.Response)) error {
+func (r *Request) request(writer io.Writer, fn func(*http.Request, *http.Response)) error {
 	if r.err != nil {
 		klog.V(4).Infof("Error in request: %v", r.err)
 		return r.err
@@ -488,18 +518,45 @@ func (r *Request) request(fn func(*http.Request, *http.Response)) error {
 			resp = &http.Response{
 				StatusCode: http.StatusInternalServerError,
 				Header:     http.Header{"Retry-After": []string{"1"}},
-				Body:       ioutil.NopCloser(bytes.NewReader([]byte{})),
+				Body:       io.NopCloser(bytes.NewReader([]byte{})),
 			}
 		}
 
 		done := func() bool {
+
 			// Ensure the response body is fully read and closed
 			// before we reconnect, so that we reuse the same TCP
 			// connection.
 			defer func() {
-				const maxBodySlurpSize = 2 << 10
-				if resp.ContentLength <= maxBodySlurpSize {
-					io.Copy(ioutil.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
+				encoding := getTransferEncoding(resp)
+				if encoding == "chunked" {
+					r := bufio.NewReader(resp.Body)
+					for {
+						select {
+						default:
+							line, err := readChunkedResponseLine(r)
+							if err != nil {
+								if err == io.EOF {
+									break
+								}
+								klog.Errorf("Error reading chunked response: %v", err)
+							}
+							if len(line) == 0 {
+								klog.V(3).Infof("readChunkedResponseLine: %s", line)
+								continue
+							}
+							_, err = writer.Write(line)
+							if err != nil {
+								klog.Errorf("Error writing chunked response: %v", err)
+							}
+						}
+
+					}
+				} else {
+					const maxBodySlurpSize = 2 << 10
+					if resp.ContentLength <= maxBodySlurpSize {
+						io.Copy(io.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
+					}
 				}
 				resp.Body.Close()
 			}()
@@ -525,6 +582,15 @@ func (r *Request) request(fn func(*http.Request, *http.Response)) error {
 			return nil
 		}
 	}
+}
+
+func getTransferEncoding(resp *http.Response) string {
+	for _, transferEncoding := range resp.TransferEncoding {
+		if transferEncoding == "chunked" {
+			return transferEncoding
+		}
+	}
+	return ""
 }
 
 // checkWait returns true along with a number of seconds if the server instructed us to wait
@@ -558,8 +624,8 @@ func (r *Request) DoRaw() ([]byte, error) {
 	}
 
 	var result Result
-	err := r.request(func(req *http.Request, resp *http.Response) {
-		result.body, result.err = ioutil.ReadAll(resp.Body)
+	err := r.request(nil, func(req *http.Request, resp *http.Response) {
+		result.body, result.err = io.ReadAll(resp.Body)
 		glogBody("Response Body", result.body)
 		if resp.StatusCode < http.StatusOK || resp.StatusCode > http.StatusPartialContent {
 			result.err = r.transformUnstructuredResponseError(resp, req, result.body)
@@ -591,7 +657,7 @@ func (r *Request) DoRaw() ([]byte, error) {
 // TODO: introduce transformation of generic http.Client.Do() errors that separates 4.
 func (r *Request) transformUnstructuredResponseError(resp *http.Response, req *http.Request, body []byte) error {
 	if body == nil && resp.Body != nil {
-		if data, err := ioutil.ReadAll(&io.LimitedReader{R: resp.Body}); err == nil {
+		if data, err := io.ReadAll(&io.LimitedReader{R: resp.Body}); err == nil {
 			body = data
 		}
 	}
@@ -608,7 +674,7 @@ func (r *Request) newUnstructuredResponseError(body []byte, statusCode int, req 
 func (r *Request) transformResponse(resp *http.Response, req *http.Request) Result {
 	var body []byte
 	if resp.Body != nil {
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		switch err.(type) {
 		case nil:
 			body = data

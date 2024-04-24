@@ -16,8 +16,10 @@ See the License for the specific language governing permissions and
 package example
 
 import (
+	"context"
 	"fmt"
 	"github.com/clarechu/go-client/rest"
+	"os"
 )
 
 func Get(host, username, password string) error {
@@ -26,10 +28,21 @@ func Get(host, username, password string) error {
 	if err != nil {
 		return fmt.Errorf("%v", err)
 	}
-	clientSet.Get().Resource("projects").
+	clientSet.Get().Resource(context.Background(), "projects").
 		Name("demo").
 		Do().
 		Into(&result)
 
 	return err
+}
+
+func Stream(host, username, password string) error {
+	stdout := os.Stdout
+	clientSet, err := rest.RESTClientFor(rest.NewDefaultConfig(host, username, password))
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	return clientSet.Get().Resource(context.Background(), "projects").
+		Name("demo").
+		Stream(stdout)
 }
