@@ -266,7 +266,7 @@ func readChunkedResponseLine(r *bufio.Reader) ([]byte, error) {
 		line = append(line, rest...)
 	}
 
-	return line, nil
+	return append(line, '\n'), nil
 }
 
 // Param creates a query parameter with the given string value.
