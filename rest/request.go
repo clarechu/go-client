@@ -630,7 +630,30 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 			defer func() {
 				encoding := getTransferEncoding(resp)
 				if encoding == "chunked" {
-					io.Copy(writer, resp.Body)
+					re := bufio.NewReader(resp.Body)
+					for {
+						select {
+						case <-r.ctx.Done():
+							return
+						default:
+							line, err := readChunkedResponseLine(re)
+							if err != nil {
+								if err == io.EOF {
+									return
+								}
+								klog.Errorf("Error reading chunked response: %v", err)
+							}
+							if len(line) == 0 {
+								klog.V(3).Infof("readChunkedResponseLine: %s", line)
+								continue
+							}
+							_, err = writer.Write(line)
+							if err != nil {
+								klog.Errorf("Error writing chunked response: %v", err)
+							}
+						}
+
+					}
 				} else {
 					const maxBodySlurpSize = 2 << 10
 					if resp.ContentLength <= maxBodySlurpSize {
