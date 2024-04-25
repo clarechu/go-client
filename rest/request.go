@@ -439,7 +439,7 @@ func (r *Request) Do() Result {
 	}
 
 	var result Result
-	err := r.request(nil, func(req *http.Request, resp *http.Response) {
+	err := r.request(func(req *http.Request, resp *http.Response) {
 		result = r.transformResponse(resp, req)
 	})
 	if err != nil {
@@ -452,7 +452,7 @@ func (r *Request) Stream(writer io.Writer) error {
 	if err := r.tryThrottle(); err != nil {
 		return err
 	}
-	err := r.request(writer, func(req *http.Request, resp *http.Response) {
+	err := r.requestToStream(writer, func(req *http.Request, resp *http.Response) {
 		r.transformResponse(resp, req)
 	})
 	return err
@@ -462,7 +462,107 @@ func (r *Request) Stream(writer io.Writer) error {
 // received. It handles retry behavior and up front validation of requests. It will invoke
 // fn at most once. It will return an error if a problem occurred prior to connecting to the
 // server - the provided function is responsible for handling server errors.
-func (r *Request) request(writer io.Writer, fn func(*http.Request, *http.Response)) error {
+func (r *Request) request(fn func(*http.Request, *http.Response)) error {
+	if r.err != nil {
+		klog.V(4).Infof("Error in request: %v", r.err)
+		return r.err
+	}
+
+	// TODO: added to catch programmer errors (invoking operations with an object with an empty namespace)
+	if (r.verb == "GET" || r.verb == "PUT" || r.verb == "DELETE") && r.projectSet && len(r.resourceName) > 0 && len(r.project) == 0 {
+		return fmt.Errorf("an empty namespace may not be set when a resource name is provided")
+	}
+	if (r.verb == "POST") && r.projectSet && len(r.project) == 0 {
+		return fmt.Errorf("an empty namespace may not be set during creation")
+	}
+
+	client := r.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	// Right now we make about ten retry attempts if we get a Retry-After response.
+	maxRetries := 10
+	retries := 0
+	for {
+		url := r.URL().String()
+		req, err := http.NewRequest(r.verb, url, r.body)
+		if err != nil {
+			return err
+		}
+		if r.timeout > 0 {
+			if r.ctx == nil {
+				r.ctx = context.Background()
+			}
+			var cancelFn context.CancelFunc
+			r.ctx, cancelFn = context.WithTimeout(r.ctx, r.timeout)
+			defer cancelFn()
+		}
+		if r.ctx != nil {
+			req = req.WithContext(r.ctx)
+		}
+		req.Header = r.headers
+
+		if retries > 0 {
+			// We are retrying the request that we already send to apiserver
+			// at least once before.
+			// This request should also be throttled with the client-internal throttler.
+			if err := r.tryThrottle(); err != nil {
+				return err
+			}
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			// For the purpose of retry, we set the artificial "retry-after" response.
+			// TODO: Should we clean the original response if it exists?
+			resp = &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     http.Header{"Retry-After": []string{"1"}},
+				Body:       io.NopCloser(bytes.NewReader([]byte{})),
+			}
+		}
+
+		done := func() bool {
+
+			// Ensure the response body is fully read and closed
+			// before we reconnect, so that we reuse the same TCP
+			// connection.
+			defer func() {
+				const maxBodySlurpSize = 2 << 10
+				if resp.ContentLength <= maxBodySlurpSize {
+					io.Copy(io.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
+				}
+				resp.Body.Close()
+			}()
+
+			retries++
+			if seconds, wait := checkWait(resp); wait && retries < maxRetries {
+				if seeker, ok := r.body.(io.Seeker); ok && r.body != nil {
+					_, err := seeker.Seek(0, 0)
+					if err != nil {
+						klog.V(4).Infof("Could not retry request, can't Seek() back to beginning of body for %T", r.body)
+						fn(req, resp)
+						return true
+					}
+				}
+
+				klog.V(4).Infof("Got a Retry-After %ds response for attempt %d to %v", seconds, retries, url)
+				return false
+			}
+			fn(req, resp)
+			return true
+		}()
+		if done {
+			return nil
+		}
+	}
+}
+
+// requestToStream connects to the server and invokes the provided function when a server response is
+// received. It handles retry behavior and up front validation of requests. It will invoke
+// fn at most once. It will return an error if a problem occurred prior to connecting to the
+// server - the provided function is responsible for handling server errors.
+func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http.Response)) error {
 	if r.err != nil {
 		klog.V(4).Infof("Error in request: %v", r.err)
 		return r.err
@@ -585,7 +685,7 @@ func (r *Request) request(writer io.Writer, fn func(*http.Request, *http.Respons
 }
 
 func getTransferEncoding(resp *http.Response) string {
-	for _, transferEncoding := range resp.Header.Values("Transfer-Encoding") {
+	for _, transferEncoding := range resp.TransferEncoding {
 		if transferEncoding == "chunked" {
 			return transferEncoding
 		}
@@ -624,7 +724,7 @@ func (r *Request) DoRaw() ([]byte, error) {
 	}
 
 	var result Result
-	err := r.request(nil, func(req *http.Request, resp *http.Response) {
+	err := r.request(func(req *http.Request, resp *http.Response) {
 		result.body, result.err = io.ReadAll(resp.Body)
 		glogBody("Response Body", result.body)
 		if resp.StatusCode < http.StatusOK || resp.StatusCode > http.StatusPartialContent {
