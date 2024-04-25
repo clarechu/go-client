@@ -26,11 +26,11 @@ import (
 	"go/types"
 	"golang.org/x/net/http2"
 	"io"
-	"io/ioutil"
 	"k8s.io/klog"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"reflect"
 	"strconv"
@@ -210,7 +210,7 @@ func (r *Request) Body(obj interface{}) *Request {
 	}
 	switch t := obj.(type) {
 	case string:
-		data, err := ioutil.ReadFile(t)
+		data, err := os.ReadFile(t)
 		if err != nil {
 			r.err = err
 			return r
