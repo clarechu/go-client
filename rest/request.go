@@ -621,7 +621,7 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 				Body:       io.NopCloser(bytes.NewReader([]byte{})),
 			}
 		}
-		defer resp.Body.Close()
+
 		done := func() bool {
 
 			// Ensure the response body is fully read and closed
@@ -660,7 +660,7 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 						io.Copy(io.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
 					}
 				}
-
+				defer resp.Body.Close()
 			}()
 
 			retries++
