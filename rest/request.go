@@ -582,8 +582,6 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 	}
 
 	// Right now we make about ten retry attempts if we get a Retry-After response.
-	maxRetries := 10
-	retries := 0
 	for {
 		url := r.URL().String()
 		req, err := http.NewRequest(r.verb, url, r.body)
@@ -602,15 +600,6 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 			req = req.WithContext(r.ctx)
 		}
 		req.Header = r.headers
-
-		if retries > 0 {
-			// We are retrying the request that we already send to apiserver
-			// at least once before.
-			// This request should also be throttled with the client-internal throttler.
-			if err := r.tryThrottle(); err != nil {
-				return err
-			}
-		}
 		resp, err := client.Do(req)
 		if err != nil {
 			// For the purpose of retry, we set the artificial "retry-after" response.
@@ -627,57 +616,39 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 			// Ensure the response body is fully read and closed
 			// before we reconnect, so that we reuse the same TCP
 			// connection.
-			defer func() {
-				encoding := getTransferEncoding(resp)
-				if encoding == "chunked" {
-					re := bufio.NewReader(resp.Body)
-					for {
-						select {
-						case <-r.ctx.Done():
-							return
-						default:
-							line, err := readChunkedResponseLine(re)
-							if err != nil {
-								if err == io.EOF {
-									return
-								}
-								klog.Errorf("Error reading chunked response: %v", err)
-							}
-							if len(line) == 0 {
-								klog.V(3).Infof("readChunkedResponseLine: %s", line)
-								continue
-							}
-							_, err = writer.Write(line)
-							if err != nil {
-								klog.Errorf("Error writing chunked response: %v", err)
-							}
-						}
-
-					}
-				} else {
-					const maxBodySlurpSize = 2 << 10
-					if resp.ContentLength <= maxBodySlurpSize {
-						io.Copy(io.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
-					}
-				}
-				defer resp.Body.Close()
-			}()
-
-			retries++
-			if seconds, wait := checkWait(resp); wait && retries < maxRetries {
-				if seeker, ok := r.body.(io.Seeker); ok && r.body != nil {
-					_, err := seeker.Seek(0, 0)
-					if err != nil {
-						klog.V(4).Infof("Could not retry request, can't Seek() back to beginning of body for %T", r.body)
-						fn(req, resp)
+			encoding := getTransferEncoding(resp)
+			if encoding == "chunked" {
+				re := bufio.NewReader(resp.Body)
+				for {
+					select {
+					case <-r.ctx.Done():
 						return true
+					default:
+						line, err := readChunkedResponseLine(re)
+						if err != nil {
+							if err == io.EOF {
+								return true
+							}
+							klog.Errorf("Error reading chunked response: %v", err)
+						}
+						if len(line) == 0 {
+							klog.V(3).Infof("readChunkedResponseLine: %s", line)
+							continue
+						}
+						_, err = writer.Write(line)
+						if err != nil {
+							klog.Errorf("Error writing chunked response: %v", err)
+						}
 					}
-				}
 
-				klog.V(4).Infof("Got a Retry-After %ds response for attempt %d to %v", seconds, retries, url)
-				return false
+				}
+			} else {
+				const maxBodySlurpSize = 2 << 10
+				if resp.ContentLength <= maxBodySlurpSize {
+					io.Copy(io.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
+				}
 			}
-			fn(req, resp)
+			defer resp.Body.Close()
 			return true
 		}()
 		if done {
