@@ -621,7 +621,7 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 				Body:       io.NopCloser(bytes.NewReader([]byte{})),
 			}
 		}
-
+		defer resp.Body.Close()
 		done := func() bool {
 
 			// Ensure the response body is fully read and closed
@@ -630,35 +630,14 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 			defer func() {
 				encoding := getTransferEncoding(resp)
 				if encoding == "chunked" {
-					r := bufio.NewReader(resp.Body)
-					for {
-						select {
-						default:
-							line, err := readChunkedResponseLine(r)
-							if err != nil {
-								if err == io.EOF {
-									break
-								}
-								klog.Errorf("Error reading chunked response: %v", err)
-							}
-							if len(line) == 0 {
-								klog.V(3).Infof("readChunkedResponseLine: %s", line)
-								continue
-							}
-							_, err = writer.Write(line)
-							if err != nil {
-								klog.Errorf("Error writing chunked response: %v", err)
-							}
-						}
-
-					}
+					io.Copy(writer, resp.Body)
 				} else {
 					const maxBodySlurpSize = 2 << 10
 					if resp.ContentLength <= maxBodySlurpSize {
 						io.Copy(io.Discard, &io.LimitedReader{R: resp.Body, N: maxBodySlurpSize})
 					}
 				}
-				resp.Body.Close()
+
 			}()
 
 			retries++
