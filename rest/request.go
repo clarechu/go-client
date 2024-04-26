@@ -658,17 +658,13 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 	}
 }
 
-func (r *Request) Websocket(ctx context.Context, writer io.Writer, reader io.Reader) error {
-	url := r.URL().String()
-	c, _, err := websocket.DefaultDialer.Dial(url, r.headers)
+func (r *Request) Websocket(reader io.Reader, writer io.Writer) error {
+	c, _, err := websocket.DefaultDialer.Dial(r.URL().String(), r.headers)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	done := make(chan struct{})
-
 	go func() {
-		defer close(done)
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {
@@ -676,22 +672,13 @@ func (r *Request) Websocket(ctx context.Context, writer io.Writer, reader io.Rea
 				return
 			}
 			writer.Write([]byte(fmt.Sprintf("%s\n", message)))
-			//klog.Infof("recv: %s, type: %d", message, mt)
 		}
 	}()
 	re := bufio.NewReader(reader)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	for {
 		select {
-		case <-done:
+		case <-r.ctx.Done():
 			return err
-		/*case t := <-ticker.C:
-		err := c.WriteMessage(websocket.TextMessage, []byte(t.String()))
-		if err != nil {
-			klog.Errorf("write: %s", err)
-			return err
-		}*/
 		default:
 			line, _, err := re.ReadLine()
 			err = c.WriteMessage(websocket.TextMessage, line)
@@ -699,7 +686,7 @@ func (r *Request) Websocket(ctx context.Context, writer io.Writer, reader io.Rea
 				klog.Errorf("write: %s", err)
 				return err
 			}
-		case <-ctx.Done():
+		case <-r.ctx.Done():
 			klog.Infof("interrupt")
 
 			// Cleanly close the connection by sending a close message and then

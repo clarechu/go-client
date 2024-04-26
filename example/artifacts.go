@@ -55,5 +55,5 @@ func Socket(host, username, password string) error {
 		return fmt.Errorf("%v", err)
 	}
 	return clientSet.Get().Resource(context.Background(), "echo").
-		Websocket(context.Background(), stdout, stdin)
+		Websocket(stdin, stdout)
 }
