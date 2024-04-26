@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	flowcontrol2 "github.com/clarechu/go-client/rest/util/flowcontrol"
+	"github.com/gorilla/websocket"
 	"go/types"
 	"golang.org/x/net/http2"
 	"io"
@@ -652,6 +653,62 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 			return true
 		}()
 		if done {
+			return nil
+		}
+	}
+}
+
+func (r *Request) Websocket(ctx context.Context, writer io.Writer, reader io.Reader) error {
+	url := r.URL().String()
+	c, _, err := websocket.DefaultDialer.Dial(url, r.headers)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		for {
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				klog.Errorf("read:%s", err)
+				return
+			}
+			writer.Write([]byte(fmt.Sprintf("%s\n", message)))
+			//klog.Infof("recv: %s, type: %d", message, mt)
+		}
+	}()
+	re := bufio.NewReader(reader)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return err
+		/*case t := <-ticker.C:
+		err := c.WriteMessage(websocket.TextMessage, []byte(t.String()))
+		if err != nil {
+			klog.Errorf("write: %s", err)
+			return err
+		}*/
+		default:
+			line, _, err := re.ReadLine()
+			err = c.WriteMessage(websocket.TextMessage, line)
+			if err != nil {
+				klog.Errorf("write: %s", err)
+				return err
+			}
+		case <-ctx.Done():
+			klog.Infof("interrupt")
+
+			// Cleanly close the connection by sending a close message and then
+			// waiting (with timeout) for the server to close the connection.
+			err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			if err != nil {
+				klog.Infof("write close: %s", err)
+				return err
+			}
 			return nil
 		}
 	}

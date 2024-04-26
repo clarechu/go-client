@@ -22,6 +22,7 @@ import (
 	flowcontrol2 "github.com/clarechu/go-client/rest/util/flowcontrol"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -70,6 +71,8 @@ const (
 // Config holds the common attributes that can be passed to a Kubernetes client on
 // initialization.
 type Config struct {
+	// Schema
+	Schema Schema
 	// Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
 	// If a URL is given then the (optional) Path of that URL represents a prefix that must
 	// be appended to all request URIs used to access the apiserver. This allows a frontend
@@ -175,10 +178,20 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 	if config.VersionApiPath == "" {
 		config.VersionApiPath = DefaultVersionApiPath
 	}
-	baseURL, err := DefaultServerURL(config.APIPath)
-	if err != nil {
-		return nil, err
+	var baseURL *url.URL
+	var err error
+	if config.Schema == 1 {
+		baseURL, err = DefaultServerURL(config.APIPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		baseURL, err = DefaultServerURLBySchema(config.Schema, config.APIPath)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	transport := TransportFor()
 
 	var httpClient *http.Client
@@ -202,4 +215,9 @@ func NewDefaultConfig(host string, username string, password string) *Config {
 		Username: username,
 		Password: password,
 	}
+}
+
+func (c *Config) SetSchema(schema Schema) *Config {
+	c.Schema = schema
+	return c
 }

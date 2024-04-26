@@ -42,3 +42,44 @@ func DefaultServerURL(host string) (*url.URL, error) {
 
 	return hostURL, nil
 }
+
+type Schema int
+
+const (
+	HttpSchema Schema = iota
+	HttpsSchema
+	WsSchema
+)
+
+func (s Schema) String() string {
+	switch s {
+	case HttpsSchema:
+		return "https"
+	case HttpSchema:
+		return "http"
+	case WsSchema:
+		return "ws"
+	default:
+		return "http"
+	}
+}
+
+func DefaultServerURLBySchema(schema Schema, host string) (*url.URL, error) {
+	if host == "" {
+		return nil, fmt.Errorf("host must be a URL or a host:port pair")
+	}
+	base := host
+	hostURL, err := url.Parse(base)
+	if err != nil || hostURL.Scheme == "" || hostURL.Host == "" {
+		schemas := fmt.Sprintf("%s://", schema.String())
+		hostURL, err = url.Parse(schemas + base)
+		if err != nil {
+			return nil, err
+		}
+		if hostURL.Path != "" && hostURL.Path != "/" {
+			return nil, fmt.Errorf("host must be a URL or a host:port pair: %q", base)
+		}
+	}
+
+	return hostURL, nil
+}

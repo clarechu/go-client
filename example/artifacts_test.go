@@ -15,6 +15,11 @@ See the License for the specific language governing permissions and
 
 package example
 
+import (
+	"testing"
+	"time"
+)
+
 /*
 func TestArtifact(t *testing.T) {
 	err := Artifact("xxx.xx.xx", "username", "password")
@@ -23,3 +28,33 @@ func TestArtifact(t *testing.T) {
 	}
 }
 */
+
+func TestSocket(t *testing.T) {
+	type args struct {
+		host     string
+		username string
+		password string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "aa",
+			args: args{
+				host: "127.0.0.1:8080",
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := Socket(tt.args.host, tt.args.username, tt.args.password); (err != nil) != tt.wantErr {
+
+				t.Errorf("Socket() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			time.Sleep(100 * time.Second)
+		})
+	}
+}

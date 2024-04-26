@@ -46,3 +46,14 @@ func Stream(host, username, password string) error {
 		Name("demo").
 		Stream(stdout)
 }
+
+func Socket(host, username, password string) error {
+	stdout := os.Stdout
+	stdin := os.Stdin
+	clientSet, err := rest.RESTClientFor(rest.NewDefaultConfig(host, username, password).SetSchema(rest.WsSchema))
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	return clientSet.Get().Resource(context.Background(), "echo").
+		Websocket(context.Background(), stdout, stdin)
+}
