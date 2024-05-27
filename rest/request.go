@@ -891,6 +891,17 @@ func (r Result) Into(obj interface{}) error {
 	return json.Unmarshal(r.body, obj)
 }
 
+func (r Result) IntoResult() ([]byte, error) {
+	if r.err != nil {
+		// Check whether the result has a Status object in the body and prefer that.
+		if r.contentType == "application/json; charset=utf-8" {
+			return nil, fmt.Errorf("%v message:%s", r.err, string(r.body))
+		}
+		return nil, r.err
+	}
+	return r.body, nil
+}
+
 func (r Result) Error() error {
 	if r.err != nil {
 		// Check whether the result has a Status object in the body and prefer that.
