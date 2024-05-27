@@ -81,8 +81,6 @@ type Config struct {
 	// APIPath is a sub-path that points to an API root.
 	APIPath string
 
-	// version api path
-	VersionApiPath string
 	// ContentConfig contains settings that affect how objects are transformed when
 	// sent to the server.
 	ContentConfig
@@ -175,18 +173,18 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 	if config.Timeout == 0 {
 		burst = DefaultTimeOut
 	}
-	if config.VersionApiPath == "" {
-		config.VersionApiPath = DefaultVersionApiPath
+	if config.APIPath == "" {
+		config.APIPath = DefaultVersionApiPath
 	}
 	var baseURL *url.URL
 	var err error
 	if config.Schema == 1 {
-		baseURL, err = DefaultServerURL(config.APIPath)
+		baseURL, err = DefaultServerURL(config.Host)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		baseURL, err = DefaultServerURLBySchema(config.Schema, config.APIPath)
+		baseURL, err = DefaultServerURLBySchema(config.Schema, config.Host)
 		if err != nil {
 			return nil, err
 		}
@@ -206,12 +204,12 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 		pwd := fmt.Sprintf("%s:%s", config.Username, config.Password)
 		headers["authorization"] = fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(pwd)))
 	}
-	return NewRESTClient(baseURL, config.VersionApiPath, config.ContentConfig, headers, qps, burst, config.RateLimiter, httpClient)
+	return NewRESTClient(baseURL, config.APIPath, config.ContentConfig, headers, qps, burst, config.RateLimiter, httpClient)
 }
 
 func NewDefaultConfig(host string, username string, password string) *Config {
 	return &Config{
-		APIPath:  host,
+		Host:     host,
 		Username: username,
 		Password: password,
 	}
