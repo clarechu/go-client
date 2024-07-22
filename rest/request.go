@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	flowcontrol2 "github.com/clarechu/go-client/rest/util/flowcontrol"
 	"github.com/gorilla/websocket"
@@ -627,7 +628,7 @@ func (r *Request) requestToStream(writer io.Writer, fn func(*http.Request, *http
 					default:
 						line, err := readChunkedResponseLine(re)
 						if err != nil {
-							if err == io.EOF {
+							if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 								return true
 							}
 							klog.Errorf("Error reading chunked response: %v", err)
