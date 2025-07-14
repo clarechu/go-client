@@ -785,7 +785,13 @@ func (r *Request) transformUnstructuredResponseError(resp *http.Response, req *h
 
 // newUnstructuredResponseError instantiates the appropriate generic error for the provided input. It also logs the body.
 func (r *Request) newUnstructuredResponseError(body []byte, statusCode int, req *http.Request) error {
-	return fmt.Errorf("%s url:%s StatusCode: %d", req.Method, req.URL.Path, statusCode)
+	return &RequestError{
+		StatusCode: statusCode,
+		Path:       req.URL.Path,
+		URL:        req.URL.String(),
+		Body:       body,
+		Method:     req.Method,
+	}
 }
 
 // transformResponse converts an API response into a structured API object
@@ -905,9 +911,6 @@ func (r Result) Error() error {
 		// Check whether the result has a Status object in the body and prefer that.
 		if r.contentType == "application/json; charset=utf-8" {
 			return fmt.Errorf("%v message:%s", r.err, string(r.body))
-		}
-		if r.contentType == "application/json" {
-			return fmt.Errorf("message: %s", string(r.body))
 		}
 		return r.err
 	}
