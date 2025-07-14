@@ -895,7 +895,7 @@ func (r Result) Into(obj interface{}) error {
 func (r Result) IntoResult() ([]byte, error) {
 	if r.err != nil {
 		// Check whether the result has a Status object in the body and prefer that.
-		return string(r.body), fmt.Errorf("%v message:%s", r.err, string(r.body))
+		return r.body, fmt.Errorf("%v message:%s", r.err, string(r.body))
 	}
 	return r.body, nil
 }
@@ -907,7 +907,7 @@ func (r Result) Error() error {
 			return fmt.Errorf("%v message:%s", r.err, string(r.body))
 		}
 		if r.contentType == "application/json" {
-			return string(r.body)
+			return fmt.Errorf("message: %s", string(r.body))
 		}
 		return r.err
 	}
